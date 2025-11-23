@@ -1,0 +1,590 @@
+*&---------------------------------------------------------------------*
+*& Report ZFI_VEND_POST_DM
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT ZFI_VEND_POST_DM.
+
+
+type-pools truxs.
+TABLES: sscrfields.
+
+data: begin of it,
+        bldat     type bldat,
+        blart     type blart,
+        bukrs     type bukrs,
+        budat     type budat,
+        monat     type monat,
+        waers     type waers,
+        xblnr     type xblnr,
+        bktxt     type bktxt,
+        newbs     type newbs,
+        konto     type lifnr,
+        amnt_doc  type string,
+        amnt_loc  type string,
+*  BUSINESSPLACE type ACPI_BRANCH,
+        bupla     type bupla,
+*  GSBER TYPE GSBER,              "   """""
+
+
+        zterm     type acpi_zterm,
+        zfbdt     type acpi_zfbdt,
+        zlspr     type acpi_zlspr,
+*  KIDNO TYPE KIDNO,
+        zuonr     type acpi_zuonr,
+        sgtxt     type sgtxt,
+        newbs1    type newbs,
+        newko1    type hkont,
+        amnt_doc1 type string,
+        amnt_loc1 type string,
+*  BUSINESSPLACE1 type ACPI_BRANCH,
+        bupla1    type bupla,
+        zuonr1    type acpi_zuonr,
+        sgtxt1    type sgtxt,
+        prctr     type prctr,
+        GSBER1 TYPE GSBER,   " 8.1.25
+*        secco     type secco,
+*  GSBER1 TYPE GSBER,
+**  KOSTL TYPE KOSTL,         "28.4.25
+**  valut TYPE valut ,          "28.4.25
+*  PS_POSID TYPE PS_POSID,
+*  AUFNR TYPE AUFNR,
+      end of it.
+
+data itab like standard table of it with header line.
+
+data: begin of itab_out occurs 0,
+        line_no type c length 7 value 0,
+        status  type c length 7,
+        message type string,
+      end of itab_out.
+
+DATA: ls_sel_button TYPE smp_dyntxt.  ""<------ added 20.2.25
+DATA :lv_file     TYPE string,
+      lv_filename TYPE string,
+      lv_fullpath TYPE string,
+      lv_path     TYPE string,
+      lv_action   TYPE i.              "<------
+
+data p_ofile   type string.
+
+data header    type bapiache09.
+data acnt_gl   type table of bapiacgl09 with header line.
+data act_pay   type table of bapiacap09 with header line.
+data curr_amt  type table of bapiaccr09 with header line.
+data ext1      type table of bapiacextc with header line.
+data return    type table of bapiret2 with header line.
+data obj_type  type bapiache09-obj_type.
+data obj_key   type bapiache09-obj_key.
+data obj_sys   type bapiache09-obj_sys.
+
+data it_raw    type truxs_t_text_data.
+data abap_true type c length 1          value 'X'.
+
+data ln_no     type c length 5          value 1.
+data count     type c length 1          value 0.
+data ret       type c length 256.
+
+data: begin of retn occurs 0,
+        message type bapiret2-message,
+      end of retn.
+
+
+selection-screen begin of block blk1 with frame title text-001.
+  PARAMETERS s_bukrs TYPE bkpf-bukrs OBLIGATORY.
+  parameters p_file type rlgrap-filename.
+selection-screen end of block blk1.
+
+SELECTION-SCREEN:     " added 20.2.25
+      PUSHBUTTON /2(40) button1 USER-COMMAND but1 .
+
+" **********************************************************************
+" At selection screen
+AT SELECTION-SCREEN.
+    IF sscrfields-ucomm = 'BUT1'.
+    PERFORM export .
+  ELSEIF p_file IS INITIAL.
+    MESSAGE 'Please Select a File' TYPE 'E'.
+  ENDIF.
+
+at selection-screen on value-request for p_file.
+  call function 'F4_FILENAME'
+    exporting field_name = 'P_FILE'
+    importing file_name  = p_file.
+
+*----------------------------------------------------------------------*
+*                           INITIALIZATION                             *
+*----------------------------------------------------------------------*
+INITIALIZATION.
+  button1 = 'Download Template'.       "added 20.2.25
+*  PERFORM REFRESH.
+
+***********************************************************************
+*START-OF-SELECTION.
+
+start-of-selection.
+  PERFORM validate_data.
+* DATA UPLOAD FROM EXCEL TO SAP INTERNAL TABLE
+  perform upload_file.
+
+  " DATA POSTING INTO TRANSACTION F-02
+  perform bapi_doc_post.
+
+  " Downloading error file
+  perform download_excel.
+
+*************************************************************************************
+*************************************************************************************
+*************Code part for attaching template************************
+  SELECTION-SCREEN FUNCTION KEY 1.
+
+FORM export .
+  CALL METHOD cl_gui_frontend_services=>file_save_dialog
+    EXPORTING
+      window_title      = 'Please Select The Location'
+      default_extension = 'XLS'
+      default_file_name = lv_file
+    CHANGING
+      filename          = lv_filename
+      path              = lv_path
+      fullpath          = lv_fullpath
+      user_action       = lv_action
+    EXCEPTIONS
+      cntl_error        = 1
+      error_no_gui      = 2
+      OTHERS            = 3.
+
+  TYPES:BEGIN OF excel_heading,
+          text(60) TYPE c,
+        END OF excel_heading.
+  DATA:it_heading TYPE STANDARD TABLE OF excel_heading INITIAL SIZE 0,
+       wa_heading TYPE excel_heading.
+
+**--Generate the heading for excel data
+  it_heading = VALUE #(
+
+( TEXT  = 'Document Date'	 )
+( TEXT  = 'Document Type'	)
+( TEXT  = 'Company Code'  )
+( TEXT  = 'Posting Date'  )
+( TEXT  = 'Period' )
+( TEXT  = 'Currency' )
+( TEXT  = 'Doc. Header Reference'	 )
+( TEXT  = 'Doc.Header Text'	 )
+( TEXT  = 'Posting Key' )
+( TEXT  = 'Vendor Account No' )
+( TEXT  = 'Amount (Document Currency)' )
+( TEXT  = 'Amount (Local Currency)' )
+( TEXT  = 'Business  Place' )
+( TEXT  = 'Payment Terms' )
+( TEXT  = 'Base Line Date' )
+( TEXT  = 'Payment Block' )
+( TEXT  = 'Assignment' )
+( TEXT  = 'Long Text 1' )
+( TEXT  = 'Posting Key' )
+( TEXT  = 'GL Account No.' )
+( TEXT  = 'Amount (Document Currency)' )
+( TEXT  = 'Amount (Local Currency)' )
+( TEXT  = 'Business Place' )
+( TEXT  = 'Assignment' )
+( TEXT  = 'Long Text 2' )
+( TEXT  = 'Profit Center' )
+( TEXT  = 'Business Area' ) ) .
+**( TEXT  = 'Cost Center'  )
+**( TEXT  = 'Value Date'  ) ).
+
+
+*( TEXT  =  'GSBER1'          ) ).
+**( text  =  'BLDAT'         )
+***( text  =  'key'                 )
+**( TEXT  =  'BLART'         )
+**( TEXT  =  'BUKRS'         )
+**( TEXT  =  'BUDAT'         )
+**( TEXT  =  'MONAT'         )
+**( TEXT  =  'WAERS'         )
+**( TEXT  =  'XBLNR'         )
+**( TEXT  =  'BKTXT'         )
+**( TEXT  =  'NEWBS'          )
+**( TEXT  =  'KONTO'          )
+**( TEXT  =  'AMNT_DOC'          )
+**( TEXT  =  'AMNT_LOC'          )
+**( TEXT  =  'BUPLA'          )
+**( TEXT  =  'ZTERM'       )
+**( TEXT  =  'ZFBDT'        )
+**( TEXT  =  'ZLSPR'       )
+**( TEXT  =  'ZUONR'       )
+**( TEXT  =  'SGTXT'       )
+**( TEXT  =  'NEWBS1'       )
+**( TEXT  =  'NEWKO1'       )
+**( TEXT  =  'AMNT_DOC1'       )
+**( TEXT  =  'AMNT_LOC1'       )
+**( TEXT  =  'BUPLA1'     )
+**( TEXT  =  'ZUONR1'     )
+**( TEXT  =  'SGTXT1'          )
+**( TEXT  =  'PRCTR'          )
+**( TEXT  =  'GSBER1'          ) ).
+
+  CALL FUNCTION 'GUI_DOWNLOAD'
+    EXPORTING
+      filename              = lv_fullpath
+      filetype              = 'DAT'
+      write_field_separator = 'X'
+    TABLES
+      data_tab              = ITAB[]
+      fieldnames            = it_heading[].
+
+  IF sy-subrc <> 0.
+*  Implement suitable error handling here
+  ENDIF.
+ENDFORM.
+END-OF-SELECTION.
+*************************************************************************************
+*************************************************************************************
+
+
+* DATA UPLOAD FROM EXCEL TO SAP INTERNAL TABLE
+
+form upload_file.
+  call function 'TEXT_CONVERT_XLS_TO_SAP'
+    exporting
+*               I_FIELD_SEPERATOR    =
+               i_line_header        = 'X'
+               i_tab_raw_data       = it_raw           " WORK TABLE
+               i_filename           = p_file
+    tables     i_tab_converted_data = itab[]    " ACTUAL DATA
+    exceptions conversion_failed    = 1
+               others               = 2.
+
+  if sy-subrc <> 0.
+    message id sy-msgid type sy-msgty number sy-msgno
+            with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  endif.
+
+endform.
+
+" DATA POSTING INTO TRANSACTION F-02
+
+form bapi_doc_post.
+  itab_out-line_no = 'Line No'.
+  itab_out-status  = 'Status'.
+  itab_out-message = 'Message'.
+
+  append itab_out.
+  clear itab_out.
+
+  loop at itab.
+
+    clear count.
+
+    ln_no += 1.
+    condense ln_no.
+
+    header-username   = sy-uname.
+    header-doc_date   = itab-bldat.
+    header-doc_type   = itab-blart.
+    header-comp_code  = itab-bukrs.
+    header-pstng_date = itab-budat.
+    header-fis_period = itab-monat.
+    header-ref_doc_no = itab-xblnr.
+    header-header_txt = itab-bktxt.
+
+    count += 1.
+
+    act_pay-itemno_acc = count.
+
+    call function 'CONVERSION_EXIT_ALPHA_INPUT'
+      exporting input  = itab-konto
+      importing output = act_pay-vendor_no.
+
+    act_pay-pmnttrms      = itab-zterm.
+    act_pay-bline_date    = itab-zfbdt.
+    act_pay-pmnt_block    = itab-zlspr.
+    act_pay-alloc_nmbr    = itab-zuonr.
+    act_pay-item_text     = itab-sgtxt.
+    act_pay-businessplace = itab-bupla.
+    act_pay-sectioncode   = itab-bukrs.
+    " ACT_PAY-BUS_AREA = '0001'.
+
+    "----------------commented by siddharth-----------------------
+*    act_pay-profit_ctr    = itab-prctr.
+*    call function 'CONVERSION_EXIT_ALPHA_INPUT'
+*      exporting input  = act_pay-profit_ctr
+*      importing output = act_pay-profit_ctr.
+    "-----------------------closed by siddharth-----------------------
+
+   ACT_PAY-BUS_AREA = ITAB-GSBER1.  " ADD 8.1.25 SV <---
+
+    " ACT_PAY-BUSINESSPLACE = ITAB-BUPLA.
+    " ACT_PAY-SECTIONCODE = ITAB-BUPLA.
+
+    append act_pay.
+    clear act_pay.
+
+    curr_amt-itemno_acc = count.
+    curr_amt-curr_type  = '00'.
+    curr_amt-currency   = itab-waers.
+
+    if itab-newbs = '21'.
+      curr_amt-amt_doccur = itab-amnt_doc.
+    elseif itab-newbs = '31'.
+      concatenate '-' itab-amnt_doc into itab-amnt_doc.
+      curr_amt-amt_doccur = itab-amnt_doc.
+    endif.
+
+    append curr_amt.
+    clear curr_amt.
+
+    curr_amt-itemno_acc = count.
+    curr_amt-curr_type  = '10'.
+    curr_amt-currency   = 'INR'.
+    "
+    if itab-waers = 'INR'.
+      itab-amnt_loc = itab-amnt_doc.
+      curr_amt-amt_doccur = itab-amnt_loc.
+    else.
+      if itab-newbs = '21'.
+        curr_amt-amt_doccur = itab-amnt_loc.
+      elseif itab-newbs = '31'.
+        concatenate '-' itab-amnt_loc into itab-amnt_loc.
+        curr_amt-amt_doccur = itab-amnt_loc.
+      endif.
+    endif.
+    "
+    append curr_amt.
+    clear curr_amt.
+
+    concatenate '000000000' count itab-newbs into ext1-field1.
+    ext1-field2 = itab-bupla.
+
+    append ext1.
+    clear ext1.
+
+    count += 1.
+
+    acnt_gl-itemno_acc = count.
+
+    call function 'CONVERSION_EXIT_ALPHA_INPUT'
+      exporting input  = itab-newko1
+      importing output = acnt_gl-gl_account.
+
+    acnt_gl-alloc_nmbr = itab-zuonr1.
+    acnt_gl-item_text  = itab-sgtxt1.
+    acnt_gl-profit_ctr = itab-prctr.
+    call function 'CONVERSION_EXIT_ALPHA_INPUT'
+      exporting input  = acnt_gl-profit_ctr
+      importing output = acnt_gl-profit_ctr.
+
+    " ACNT_GL-BUPLA  = ITAB-BUPLA.
+
+    " ACNT_GL-BUS_AREA = '0001'.
+*    acnt_gl-plant = itab-prctr. "cmnt 7.3.25
+    acnt_gl-plant = itab-gsber1.   "add 7.3.25
+    " ACNT_GL-COSTCENTER = ITAB-KOSTL.
+    " ACNT_GL-WBS_ELEMENT  = ITAB-PS_POSID.
+    " ACNT_GL-ORDERID = ITAB-AUFNR.
+    append acnt_gl.
+    clear acnt_gl.
+
+    curr_amt-itemno_acc = count.
+    " CURR_AMT-CURR_TYPE = '00'.
+    curr_amt-currency   = itab-waers.
+
+    if itab-newbs1 = '40'.
+      curr_amt-amt_doccur = itab-amnt_doc1.
+    elseif itab-newbs1 = '50'.
+      concatenate '-' itab-amnt_doc1 into itab-amnt_doc1.
+      curr_amt-amt_doccur = itab-amnt_doc1.
+    endif.
+
+    append curr_amt.
+    clear curr_amt.
+
+    curr_amt-itemno_acc = count.
+    curr_amt-curr_type  = '10'.
+    curr_amt-currency   = 'INR'.
+    "
+    if itab-waers = 'INR'.
+      itab-amnt_loc1 = itab-amnt_doc1.
+      curr_amt-amt_doccur = itab-amnt_loc1.
+    else.
+      if itab-newbs1 = '40'.
+        curr_amt-amt_doccur = itab-amnt_loc1.
+      elseif itab-newbs1 = '50'.
+        concatenate '-' itab-amnt_loc1 into itab-amnt_loc1.
+        curr_amt-amt_doccur = itab-amnt_loc1.
+      endif.
+    endif.
+    "
+    append curr_amt.
+    clear curr_amt.
+
+    concatenate '000000000' count itab-newbs1 into ext1-field1.
+    ext1-field2 = itab-bupla1.
+
+    append ext1.
+    clear ext1.
+
+    call function 'BAPI_ACC_DOCUMENT_POST'
+      exporting documentheader = header
+*                CUSTOMERCPD    =
+*                CONTRACTHEADER =
+      importing obj_type       = obj_type
+                obj_key        = obj_key
+                obj_sys        = obj_sys
+      tables    accountgl      = acnt_gl
+*                ACCOUNTRECEIVABLE =
+                accountpayable = act_pay
+*                ACCOUNTTAX     =
+                currencyamount = curr_amt
+*                CRITERIA       =
+*                VALUEFIELD     =
+                extension1     = ext1
+                return         = return
+*                PAYMENTCARD    =
+*                CONTRACTITEM   =
+*                EXTENSION2     =
+*                REALESTATE     =
+*                ACCOUNTWT      =
+              .
+
+    call function 'BAPI_TRANSACTION_COMMIT'
+      exporting wait = 'X'
+* IMPORTING
+*                RETURN =
+              .
+
+    delete return where type = 'W' or type = 'I'.
+    read table return with key type = 'S'.
+    if sy-subrc <> 0.
+      read table return with key type = 'E'.
+      if sy-subrc = 0.
+
+        itab_out-line_no = ln_no.
+        condense itab_out-line_no.
+
+        loop at return.
+          retn-message = return-message.
+          append retn.
+          clear retn.
+        endloop.
+
+        delete retn index 1.
+        delete adjacent duplicates from retn.
+
+        concatenate lines of retn into ret separated by '.'.
+        itab_out-status  = 'Error'.
+        itab_out-message = ret.
+
+        append itab_out.
+        clear itab_out.
+      endif.
+
+    elseif sy-subrc = 0.
+      itab_out-line_no = ln_no.
+      itab_out-status  = 'Success'.
+      itab_out-message = obj_key+0(10).
+      append itab_out.
+      clear itab_out.
+
+    endif.
+
+    clear count.
+    clear header.
+    clear acnt_gl.
+    clear ext1.
+    clear act_pay.
+    clear curr_amt.
+    clear obj_type.
+    clear obj_key.
+    clear obj_sys.
+    clear retn.
+    clear ret.
+    refresh acnt_gl.
+    refresh ext1.
+    refresh act_pay.
+    refresh curr_amt.
+    refresh retn.
+
+  endloop.
+
+endform.
+
+" Downloading error file
+form download_excel.
+  concatenate p_file '_LOG' sy-datum sy-uzeit '.xls' into p_ofile.
+
+  call function 'GUI_DOWNLOAD'
+    exporting
+*               BIN_FILESIZE            =
+               filename                = p_ofile
+               filetype                = 'DAT'
+               append                  = ' '
+               write_field_separator   = 'X'
+*               HEADER                  = '00'
+*               TRUNC_TRAILING_BLANKS   = ' '
+*               WRITE_LF                = 'X'
+*               COL_SELECT              = ' '
+*               COL_SELECT_MASK         = ' '
+*               DAT_MODE                = ' '
+*               CONFIRM_OVERWRITE       = ' '
+*               NO_AUTH_CHECK           = ' '
+*               CODEPAGE                = ' '
+               ignore_cerr             = abap_true
+*               REPLACEMENT             = '#'
+*               WRITE_BOM               = ' '
+*               TRUNC_TRAILING_BLANKS_EOL = 'X'
+*               WK1_N_FORMAT            = ' '
+*               WK1_N_SIZE              = ' '
+*               WK1_T_FORMAT            = ' '
+*               WK1_T_SIZE              = ' '
+*               WRITE_LF_AFTER_LAST_LINE = ABAP_TRUE
+*               SHOW_TRANSFER_STATUS    = ABAP_TRUE
+*  IMPORTING
+*               FILELENGTH              =
+    tables     data_tab                = itab_out
+*               FIELDNAMES              =
+    exceptions file_write_error        = 1
+               no_batch                = 2
+               gui_refuse_filetransfer = 3
+               invalid_type            = 4
+               no_authority            = 5
+               unknown_error           = 6
+               header_not_allowed      = 7
+               separator_not_allowed   = 8
+               filesize_not_allowed    = 9
+               header_too_long         = 10
+               dp_error_create         = 11
+               dp_error_send           = 12
+               dp_error_write          = 13
+               unknown_dp_error        = 14
+               access_denied           = 15
+               dp_out_of_memory        = 16
+               disk_full               = 17
+               dp_timeout              = 18
+               file_not_found          = 19
+               dataprovider_exception  = 20
+               control_flush_error     = 21
+               others                  = 22.
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+endform.
+*&---------------------------------------------------------------------*
+*& Form validate_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+form validate_data .
+AUTHORITY-CHECK OBJECT 'ZOBJ_CCD'
+  ID 'BUKRS' FIELD s_bukrs
+  ID 'ACTVT' FIELD '03'.
+IF SY-SUBRC <> 0.
+  MESSAGE |You are not authorised  to run this Company Code - { s_bukrs } | TYPE 'E' .
+* IMPLEMENT A SUITABLE EXCEPTION HANDLING HERE
+ENDIF.
+endform.
