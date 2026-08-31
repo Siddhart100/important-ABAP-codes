@@ -1,0 +1,145 @@
+*&---------------------------------------------------------------------*
+*& Report ZSD_OTIF_REPORT
+*&---------------------------------------------------------------------*
+REPORT zsd_otif_report.
+
+TABLES: marc, vbak.
+
+TYPES: BEGIN OF ty_final,
+         sno               TYPE i,
+         orderno           TYPE vbeln_va,
+         orderitem         TYPE posnr_va,
+         plant             TYPE werks_d,
+         distchannel       TYPE vtweg,
+         customerno        TYPE kunnr,
+         customername      TYPE name1_gp,
+         orderapprovaldate TYPE erdat,
+         orderamount       TYPE netwr_ap,
+         ordercurrency     TYPE waerk,
+         deliveryno        TYPE vbeln_vl,
+         deliverydate      TYPE erdat,
+         deliveryamount    TYPE netwr_ap,
+         deliverycurrency  TYPE waerk,
+         invoiceno         TYPE vbeln_vf,
+         invoicedate       TYPE fkdat,
+         invoiceamount     TYPE netwr_ap,
+         invoicecurrency   TYPE waerk,
+         ORDER_TO_INV_TIME TYPE INT4,
+         FILL_TIME TYPE INT4,
+          Remarks  TYPE INT4,
+          ORDER_STATUS  TYPE INT4,
+       END OF ty_final.
+
+DATA: gt_final TYPE TABLE OF ty_final.
+
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+  SELECT-OPTIONS: s_plant FOR marc-werks OBLIGATORY,
+                  s_order FOR vbak-vbeln,
+                  s_date  FOR vbak-erdat OBLIGATORY.
+SELECTION-SCREEN END OF BLOCK b1.
+
+START-OF-SELECTION.
+
+  SELECT
+    orderno,
+    orderitem,
+    plant,
+    distchannel,
+    customerno,
+    customername,
+    orderapprovaldate,
+    orderamount,
+    ordercurrency,
+    deliveryno,
+    deliverydate,
+    deliveryamount,
+    deliverycurrency,
+    invoiceno,
+    invoicedate,
+    invoiceamount,
+    invoicecurrency
+  FROM ZCDS_OTIF_REP
+  WHERE plant             IN @s_plant
+    AND orderno           IN @s_order
+    AND orderapprovaldate IN @s_date
+  ORDER BY plant ASCENDING, orderno ASCENDING
+  INTO TABLE @DATA(gt_raw).
+
+  IF gt_raw IS INITIAL.
+    MESSAGE 'No data found for the given criteria.' TYPE 'S' DISPLAY LIKE 'E'.
+    EXIT.
+  ENDIF.
+
+  LOOP AT gt_raw INTO DATA(ls_raw).
+    DATA(ls_final) = CORRESPONDING ty_final( ls_raw ).
+    ls_final-sno   = sy-tabix.
+    APPEND ls_final TO gt_final.
+  ENDLOOP.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = DATA(lo_alv)
+        CHANGING
+          t_table      = gt_final ).
+
+
+      DATA(lo_cols) = lo_alv->get_columns( ).
+      lo_cols->set_optimize( abap_true ).
+
+      lo_cols->get_column( 'ORDERITEM' )->set_visible( abap_false ).
+      lo_cols->get_column( 'CUSTOMERNO' )->set_visible( abap_false ).
+      lo_cols->get_column( 'ORDERCURRENCY' )->set_visible( abap_false ).
+      lo_cols->get_column( 'DELIVERYCURRENCY' )->set_visible( abap_false ).
+      lo_cols->get_column( 'INVOICECURRENCY' )->set_visible( abap_false ).
+
+      " Rename SNO Column header
+      DATA(lo_col_sno) = lo_cols->get_column( 'SNO' ).
+      lo_col_sno->set_short_text( 'S.No.' ).
+      lo_col_sno->set_medium_text( 'S.No.' ).
+      lo_col_sno->set_long_text( 'Serial Number' ).
+
+      DATA(lo_col_time) = lo_cols->get_column( 'ORDER_TO_INV_TIME' ).
+      lo_col_time->set_short_text( 'Ord-Inv' ).
+      lo_col_time->set_medium_text( 'Ord to Inv Days' ).
+      lo_col_time->set_long_text( 'Order to Invoice Time' ).
+
+      DATA(LO_COL_FILL) = lo_cols->get_column( 'FILL_TIME' ).
+      LO_COL_FILL->set_short_text( 'FILL_TIME' ).
+      LO_COL_FILL->set_medium_text( 'FILL_TIME' ).
+      LO_COL_FILL->set_long_text( 'FILL_TIME' ).
+
+      DATA(LO_COL_REMARK) = lo_cols->get_column( 'REMARKS' ).
+      LO_COL_REMARK->set_short_text( 'REMARKS' ).
+      LO_COL_REMARK->set_medium_text( 'REMARKS' ).
+      LO_COL_REMARK->set_long_text( 'REMARKS' ).
+
+      DATA(LO_COL_ORDST) = lo_cols->get_column( 'ORDER_STATUS' ).
+      LO_COL_ORDST->set_short_text( 'ORD_STAT' ).
+      LO_COL_ORDST->set_medium_text( 'ORDER_STATUS' ).
+      LO_COL_ORDST->set_long_text( 'ORDER_STATUS' ).
+
+      lo_cols->set_column_position( columnname = 'SNO'                 position = 1 ).
+      lo_cols->set_column_position( columnname = 'PLANT'               position = 2 ).
+      lo_cols->set_column_position( columnname = 'DISTCHANNEL'         position = 3 ).
+      lo_cols->set_column_position( columnname = 'ORDERNO'             position = 4 ).
+      lo_cols->set_column_position( columnname = 'CUSTOMERNAME'        position = 5 ).
+      lo_cols->set_column_position( columnname = 'ORDERAPPROVALDATE'   position = 6 ).
+      lo_cols->set_column_position( columnname = 'ORDERAMOUNT'         position = 7 ).
+      lo_cols->set_column_position( columnname = 'DELIVERYNO'          position = 8 ).
+      lo_cols->set_column_position( columnname = 'DELIVERYDATE'        position = 9 ).
+      lo_cols->set_column_position( columnname = 'DELIVERYAMOUNT'      position = 10 ).
+      lo_cols->set_column_position( columnname = 'INVOICENO'           position = 11 ).
+      lo_cols->set_column_position( columnname = 'INVOICEDATE'         position = 12 ).
+      lo_cols->set_column_position( columnname = 'INVOICEAMOUNT'       position = 13 ).
+      lo_cols->set_column_position( columnname = 'ORDER_TO_INV_TIME'       position = 14 ).
+      lo_cols->set_column_position( columnname = 'FILL_TIME'       position = 15 ).
+      lo_cols->set_column_position( columnname = 'REMARKS'       position = 16 ).
+      lo_cols->set_column_position( columnname = 'ORDER_STATUS'       position = 17 ).
+
+      lo_alv->display( ).
+
+    CATCH cx_salv_not_found cx_salv_msg INTO DATA(lx_error).
+      MESSAGE lx_error->get_text( ) TYPE 'E'.
+  ENDTRY.
